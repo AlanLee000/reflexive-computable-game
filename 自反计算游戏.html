@@ -1,0 +1,898 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>TermCraft: 形式系统解谜游戏（修正版）</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <style>
+    /* 自定义样式，用于增强交互性 */
+    .term-node {
+      transition: background-color 0.2s ease-in-out, box-shadow 0.2s ease-in-out;
+      cursor: default;
+    }
+    /* —— 修复高亮颜色（移除无效的 box-shadow-color） —— */
+    .term-node.highlight-app { box-shadow: 0 0 0 2px #3b82f6; }       /* blue-500 */
+    .term-node.highlight-rule-l { box-shadow: 0 0 0 2px #ef4444; }   /* red-500 */
+    .term-node.highlight-rule-r { box-shadow: 0 0 0 2px #22c55e; }   /* green-500 */
+    .term-node.highlight-placeholder { background-color: #eab308; color: #fff; cursor: pointer; } /* yellow-500 */
+    .term-node.highlight-placeholder:hover { background-color: #f59e0b; }
+
+    .action-card {
+      transition: transform 0.1s ease-in-out, box-shadow 0.2s ease-in-out;
+    }
+    .action-card:hover {
+      transform: translateY(-2px);
+      box-shadow: 0 4px 6px -1px rgb(0 0 0 / 0.1), 0 2px 4px -2px rgb(0 0 0 / 0.1);
+    }
+  </style>
+</head>
+<body class="bg-slate-100 font-sans text-slate-800 p-4 lg:p-8">
+
+  <div id="game-container" class="max-w-7xl mx-auto">
+    <header class="mb-6 pb-4 border-b border-slate-300">
+      <div class="flex items-center justify-between">
+        <div>
+          <h1 class="text-4xl font-bold text-slate-900">TermCraft</h1>
+          <p class="text-slate-600 mt-1">一个基于形式系统重写的解谜游戏引擎（修正版）</p>
+        </div>
+        <button id="dev-toggle-button" class="bg-slate-200 text-slate-800 font-semibold py-2 px-4 rounded-lg hover:bg-slate-300 transition-colors">
+          开发者模式
+        </button>
+      </div>
+    </header>
+
+    <!-- 开发者模式面板 -->
+    <div id="dev-panel" class="hidden bg-white p-6 rounded-lg shadow-md mb-6 space-y-4">
+      <h2 class="text-2xl font-semibold text-slate-800 border-b pb-2">开发者设置</h2>
+      <div class="grid grid-cols-1 lg:grid-cols-2 gap-4">
+        <div>
+          <label for="dev-fuel-input" class="block text-sm font-semibold text-slate-700 mb-1">燃料 (Fuel)</label>
+          <input type="number" id="dev-fuel-input" class="w-full border border-slate-300 rounded-md p-2">
+        </div>
+        <div>
+          <label for="dev-budget-input" class="block text-sm font-semibold text-slate-700 mb-1">预算 (Budget)</label>
+          <input type="number" id="dev-budget-input" class="w-full border border-slate-300 rounded-md p-2">
+        </div>
+      </div>
+      <div>
+        <label for="dev-current-term-input" class="block text-sm font-semibold text-slate-700 mb-1">当前项 (Current Term)</label>
+        <textarea id="dev-current-term-input" rows="5" class="w-full border border-slate-300 rounded-md p-2 font-mono text-sm"></textarea>
+      </div>
+      <div>
+        <label for="dev-target-term-input" class="block text-sm font-semibold text-slate-700 mb-1">目标项 (Target Term)</label>
+        <textarea id="dev-target-term-input" rows="5" class="w-full border border-slate-300 rounded-md p-2 font-mono text-sm"></textarea>
+      </div>
+      <div class="flex justify-end items-center gap-4">
+        <p id="dev-error-message" class="text-red-500 text-sm flex-grow"></p>
+        <button id="dev-apply-button" class="bg-indigo-600 text-white font-semibold py-2 px-6 rounded-lg hover:bg-indigo-700 transition-colors">
+          应用设置
+        </button>
+      </div>
+    </div>
+
+    <!-- 游戏状态显示 -->
+    <div id="game-status" class="flex flex-wrap gap-4 mb-6 text-center">
+      <div class="bg-blue-100 text-blue-800 p-4 rounded-lg shadow-sm flex-grow">
+        <div class="text-sm font-semibold uppercase">剩余燃料 (Fuel)</div>
+        <div id="fuel-display" class="text-3xl font-bold">5</div>
+      </div>
+      <div class="bg-green-100 text-green-800 p-4 rounded-lg shadow-sm flex-grow">
+        <div class="text-sm font-semibold uppercase">剩余预算 (Budget)</div>
+        <div id="budget-display" class="text-3xl font-bold">10</div>
+      </div>
+    </div>
+
+    <!-- 游戏主面板 -->
+    <main class="grid grid-cols-1 lg:grid-cols-2 gap-8">
+      <!-- 左侧：当前项和目标项 -->
+      <div>
+        <section id="current-term-section" class="bg-white p-6 rounded-lg shadow-md mb-6">
+          <h2 class="text-2xl font-semibold mb-3 text-slate-800">当前项 (Current Term)</h2>
+          <div id="current-term-display" class="bg-slate-50 p-4 rounded-md text-lg font-mono overflow-x-auto"></div>
+        </section>
+
+        <section id="target-term-section" class="bg-white p-6 rounded-lg shadow-md">
+          <h2 class="text-2xl font-semibold mb-3 text-slate-800">目标项 (Target Term)</h2>
+          <div id="target-term-display" class="bg-slate-200 p-4 rounded-md text-lg font-mono overflow-x-auto"></div>
+        </section>
+      </div>
+
+      <!-- 右侧：可用动作 -->
+      <div>
+        <section id="actions-section" class="bg-white p-6 rounded-lg shadow-md">
+          <h2 class="text-2xl font-semibold mb-3 text-slate-800">可用动作</h2>
+          <div id="actions-list" class="space-y-4 max-h-[60vh] overflow-y-auto pr-2"></div>
+        </section>
+      </div>
+    </main>
+
+    <!-- 游戏消息模态框 (胜利/失败) -->
+    <div id="message-modal" class="fixed inset-0 bg-black bg-opacity-50 items-center justify-center flex hidden">
+      <div id="message-content" class="bg-white text-center p-8 rounded-lg shadow-2xl max-w-sm">
+        <h3 id="message-title" class="text-4xl font-bold mb-4">胜利!</h3>
+        <p id="message-body" class="text-slate-600 mb-6">恭喜你，成功构造出目标项！</p>
+        <button id="restart-button" class="bg-indigo-600 text-white font-semibold py-2 px-6 rounded-lg hover:bg-indigo-700 transition-colors">重新开始</button>
+      </div>
+    </div>
+
+    <!-- 构造模态框 -->
+    <div id="construct-modal" class="fixed inset-0 bg-black bg-opacity-50 items-center justify-center hidden">
+      <div class="bg-white p-8 rounded-lg shadow-2xl w-full max-w-md">
+        <h3 class="text-2xl font-bold mb-4 text-slate-800">构造新项</h3>
+        <p class="mb-4 text-slate-600">输入一个新项来填充占位符。大小不能超过预算 <span id="construct-budget" class="font-bold">10</span>。</p>
+        <textarea id="construct-input" rows="3" class="w-full border border-slate-300 rounded-md p-2 font-mono focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500"></textarea>
+        <p id="construct-error" class="text-red-500 text-sm mt-1 h-5"></p>
+        <div class="mt-4 flex justify-end gap-3">
+          <button id="construct-cancel" class="bg-slate-200 text-slate-800 font-semibold py-2 px-4 rounded-lg hover:bg-slate-300 transition-colors">取消</button>
+          <button id="construct-confirm" class="bg-indigo-600 text-white font-semibold py-2 px-4 rounded-lg hover:bg-indigo-700 transition-colors">确认构造</button>
+        </div>
+      </div>
+    </div>
+
+  </div>
+
+<script>
+// ============================================================================
+// TermCraft: 形式系统解谜游戏引擎 - 完整修正版
+// 主要修复：
+//  - 完整实现 CongruenceClosure 的同余闭包（循环到不再变化，rank 优化）
+//  - 规范化 substitution 的键为变量名（而非 var(X) 的字符串）
+//  - 更稳健的路径检查（getSubtermAt / replaceSubtermAt）并在 UI 安全处理失效动作
+//  - termToHtml 使用 HTML 转义以防 XSS / 注入
+//  - 查找构造子时仅匹配复合项（避免常量误匹配）
+//  - Display/Actions 中对 snapshot 与失效情况做更稳健处理
+// ============================================================================
+
+// ----------------------------------------------------------------------------
+// Section 1: 数据结构与游戏状态（改进）
+// ----------------------------------------------------------------------------
+
+class Term {
+  constructor(type, value, children = []) {
+    this.type = type;
+    this.value = value;
+    this.children = children;
+    this.id = Math.random().toString(36).substr(2, 9);
+  }
+  static Var(name) { return new Term('VAR', name); }
+  static Const(name) { return new Term('CONST', name); }
+  static Compound(name, children) { return new Term('COMPOUND', name, children); }
+  isVariable() { return this.type === 'VAR'; }
+  isConstant() { return this.type === 'CONST'; }
+  isCompound() { return this.type === 'COMPOUND'; }
+  getConstructor() { return this.value; }
+  getArity() { return this.children.length; }
+  getChild(i) { return this.children[i]; }
+  toString() {
+    if (this.isVariable()) return `var(${this.value})`;
+    if (this.isConstant()) return this.value;
+    return `${this.value}(${this.children.map(c => c.toString()).join(',')})`;
+  }
+  clone() { return new Term(this.type, this.value, this.children.map(c => c.clone())); }
+  equals(other) { if (!(other instanceof Term)) return false; return this.toString() === other.toString(); }
+  static fromString(str) {
+    str = str.trim();
+    const varMatch = str.match(/^var\((\w+)\)$/i);
+    if (varMatch) { return Term.Var(varMatch[1]); }
+    const compoundMatch = str.match(/^(\w+)\((.*)\)$/);
+    if (compoundMatch) {
+      const name = compoundMatch[1];
+      const argsStr = compoundMatch[2];
+      if (argsStr.trim() === '') return Term.Compound(name, []);
+      const children = [];
+      let balance = 0;
+      let lastSplit = 0;
+      for (let i = 0; i < argsStr.length; i++) {
+        if (argsStr[i] === '(') balance++;
+        else if (argsStr[i] === ')') balance--;
+        else if (argsStr[i] === ',' && balance === 0) {
+          children.push(Term.fromString(argsStr.substring(lastSplit, i)));
+          lastSplit = i + 1;
+        }
+      }
+      children.push(Term.fromString(argsStr.substring(lastSplit)));
+      return Term.Compound(name, children);
+    }
+    if (str.match(/^\w+$/)) { return Term.Const(str); }
+    throw new Error(`Invalid term string: "${str}"`);
+  }
+}
+
+// ----------------------------------------------------------------------------
+// Section: CongruenceClosure（用于建立真正的同余闭包）
+// ----------------------------------------------------------------------------
+
+class CongruenceClosure {
+  constructor(termsArray = []) {
+    // parent: map termString -> representative termString
+    this.parent = new Map();
+    this.termMap = new Map(); // termString -> Term instance (canonical)
+    this.rank = new Map();
+    termsArray.forEach(t => {
+      const s = t.toString();
+      this.parent.set(s, s);
+      this.termMap.set(s, t.clone());
+      this.rank.set(s, 0);
+    });
+  }
+
+  // find representative string with path compression
+  find(s) {
+    if (!this.parent.has(s)) return s;
+    const p = this.parent.get(s);
+    if (p === s) return s;
+    const root = this.find(p);
+    this.parent.set(s, root);
+    return root;
+  }
+
+  // union with rank heuristic
+  union(s1, s2) {
+    const r1 = this.find(s1);
+    const r2 = this.find(s2);
+    if (r1 === r2) return false;
+    const rank1 = this.rank.get(r1) || 0;
+    const rank2 = this.rank.get(r2) || 0;
+    if (rank1 < rank2) {
+      this.parent.set(r1, r2);
+    } else if (rank1 > rank2) {
+      this.parent.set(r2, r1);
+    } else {
+      this.parent.set(r2, r1);
+      this.rank.set(r1, rank1 + 1);
+    }
+    return true;
+  }
+
+  // add term if absent
+  addTerm(t) {
+    const s = t.toString();
+    if (!this.parent.has(s)) {
+      this.parent.set(s, s);
+      this.termMap.set(s, t.clone());
+      this.rank.set(s, 0);
+    }
+  }
+
+  // Build congruence closure given initial equalities array of pairs of Term objects (ground)
+  buildClosure(equalityPairs) {
+    // add and union initial equalities
+    for (const [a, b] of equalityPairs) {
+      this.addTerm(a);
+      this.addTerm(b);
+      this.union(a.toString(), b.toString());
+    }
+
+    // propagate congruence until fixpoint
+    let changed = true;
+    let loopGuard = 0;
+    while (changed && loopGuard++ < 10000) {
+      changed = false;
+      const sigMap = new Map();
+
+      for (const [ts, term] of this.termMap.entries()) {
+        if (!term.isCompound()) continue;
+        // children's representative strings
+        const childReps = term.children.map(ch => this.find(ch.toString()));
+        const key = `${term.getConstructor()}|${term.getArity()}|${JSON.stringify(childReps)}`;
+        if (sigMap.has(key)) {
+          const otherTs = sigMap.get(key);
+          if (this.union(ts, otherTs)) changed = true;
+        } else {
+          sigMap.set(key, ts);
+        }
+      }
+    }
+    return true;
+  }
+
+  // get equivalence class as array of Term objects for a given Term t
+  getClass(t) {
+    const rep = this.find(t.toString());
+    const result = new Set();
+    for (const key of this.parent.keys()) {
+      if (this.find(key) === rep) {
+        try { result.add(Term.fromString(key)); } catch (_) {}
+      }
+    }
+    // if none matched (term absent), include term itself
+    if (![...result].some(x => x.equals(t))) result.add(t.clone());
+    return Array.from(result);
+  }
+}
+
+// ----------------------------------------------------------------------------
+// Section 2: 主游戏循环（保留）
+// ----------------------------------------------------------------------------
+
+let GameState = { T: null, F: 0, B: 0 };
+let TargetTerm = null;
+let InitialState = {};
+
+function MainGameLoop(T_initial, F_initial, B_initial, T_target) {
+  GameState = { T: T_initial.clone(), F: F_initial, B: B_initial };
+  TargetTerm = T_target.clone();
+  InitialState = { T: T_initial.clone(), F: F_initial, B: B_initial, Target: T_target.clone() };
+  runTurn();
+}
+
+function runTurn() {
+  DisplayToPlayer(GameState.T, GameState.F, GameState.B, TargetTerm);
+  if (GameState.T.equals(TargetTerm)) { DeclareVictory(); return; }
+
+  // Calculate equivalence relation using congruence closure
+  const equiv_relation = CalculateEquivalenceRelation(GameState.T);
+  const valid_rewrites = FindValidRewrites(GameState.T, equiv_relation);
+  const placeholder_sites = FindPlaceholderSites(GameState.T);
+
+  if (GameState.F <= 0 && valid_rewrites.length === 0 && placeholder_sites.length === 0) {
+    DeclareDefeat("燃料耗尽且无可用动作！");
+    return;
+  }
+
+  if (valid_rewrites.length === 0 && placeholder_sites.length === 0) {
+    DeclareDefeat("没有更多可用动作！");
+    return;
+  }
+
+  displayActions(valid_rewrites, placeholder_sites);
+}
+
+// ----------------------------------------------------------------------------
+// Section 3: 核心算法（同余闭包实现）
+// ----------------------------------------------------------------------------
+
+function CalculateEquivalenceRelation(T) {
+  // 1. 收集所有地面子项（去重）
+  const groundWithPos = GetAllGroundSubtermsWithPositions(T);
+  const unique = new Map();
+  for (const [p, t] of groundWithPos) {
+    const k = t.toString();
+    if (!unique.has(k)) unique.set(k, t);
+  }
+  const groundTerms = Array.from(unique.values());
+
+  // 2. 新建 congruence closure 并加入全部 ground term
+  const cc = new CongruenceClosure();
+  for (const gt of groundTerms) cc.addTerm(gt);
+
+  // 3. 收集等价公理（只考虑地面项）
+  const equiv_axioms = FindAllSubtermsWithPositions(T, "equiv");
+  const eqPairs = [];
+  for (const [p, axiom] of equiv_axioms) {
+    if (axiom.getArity() !== 2) continue;
+    const a = axiom.getChild(0);
+    const b = axiom.getChild(1);
+    if (ContainsVariables(a) || ContainsVariables(b)) {
+      console.warn("已忽略非法等价公理（必须为地面项）:", axiom.toString());
+      continue;
+    }
+    cc.addTerm(a);
+    cc.addTerm(b);
+    eqPairs.push([a.clone(), b.clone()]);
+  }
+
+  // 4. build congruence closure from eqPairs
+  cc.buildClosure(eqPairs);
+  return cc;
+}
+
+function FindValidRewrites(T, equiv_relation) {
+  let valid_actions = [];
+  const all_rules = FindAllSubtermsWithPositions(T, "rewrite");
+  const all_ground_sites = GetAllGroundSubtermsWithPositions(T);
+
+  for (const [p_rule, rule_term] of all_rules) {
+    if (rule_term.getArity() !== 2) continue;
+    const [l, r] = rule_term.children;
+
+    // Fix-2: 禁止 R 引入 L 未绑定的游离变量
+    const fvL = FreeVars(l); // set of variable names (strings)
+    const fvR = FreeVars(r);
+    const extra = [...fvR].filter(x => !fvL.has(x));
+    if (extra.length > 0) {
+      console.warn(`忽略非法规则（R 引入未绑定变量）： ${rule_term.toString()} ; 未绑定变量: ${extra.join(',')}`);
+      continue; // skip this rule
+    }
+
+    for (const [p_app, site_term] of all_ground_sites) {
+      const found_substitutions = FindInferentialMatches(l, site_term, equiv_relation);
+      for (const sigma of found_substitutions) {
+        // store snapshot (clones) for safer UI display
+        valid_actions.push({
+          type: 'Rewrite',
+          p_app: p_app.slice(),
+          p_rule: p_rule.slice(),
+          sigma: new Map(Array.from(sigma.entries()).map(([k,v]) => [k, v.clone()])),
+          // snapshot for UI
+          snapshot: {
+            appTerm: site_term.clone(),
+            ruleTerm: rule_term.clone()
+          }
+        });
+      }
+    }
+  }
+  return valid_actions;
+}
+
+function FreeVars(t) {
+  const res = new Set();
+  function walk(x) {
+    if (x.isVariable()) res.add(x.value);
+    else if (x.isCompound()) x.children.forEach(walk);
+  }
+  walk(t);
+  return res;
+}
+
+function FindInferentialMatches(pattern_l, term_a, equiv_relation) {
+  const all_found_substitutions = [];
+  const equivalence_class_of_a = equiv_relation.getClass(term_a);
+  for (const b of equivalence_class_of_a) {
+    const [was_successful, final_substitution] = SyntacticMatch(pattern_l, b, new Map());
+    if (was_successful) all_found_substitutions.push(final_substitution);
+  }
+  return UniqueSubstitutions(all_found_substitutions);
+}
+
+// SyntacticMatch: 使用变量名作为 substitution 的 key（更直观）
+function SyntacticMatch(pattern, term, current_substitution) {
+  if (pattern.isVariable()) {
+    const v_name = pattern.value; // 变量名
+    if (current_substitution.has(v_name)) {
+      const is_consistent = current_substitution.get(v_name).equals(term);
+      return [is_consistent, current_substitution];
+    } else {
+      const new_substitution = new Map(current_substitution);
+      new_substitution.set(v_name, term.clone());
+      return [true, new_substitution];
+    }
+  }
+  if (pattern.isConstant()) {
+    return [pattern.equals(term), current_substitution];
+  }
+  if (pattern.isCompound()) {
+    if (!term.isCompound() || pattern.getConstructor() !== term.getConstructor() || pattern.getArity() !== term.getArity()) {
+      return [false, null];
+    }
+    let temp_substitution = current_substitution;
+    for (let i = 0; i < pattern.getArity(); i++) {
+      const [was_successful, updated_substitution] = SyntacticMatch(pattern.getChild(i), term.getChild(i), temp_substitution);
+      if (!was_successful) return [false, null];
+      temp_substitution = updated_substitution;
+    }
+    return [true, temp_substitution];
+  }
+  return [false, null];
+}
+
+function ApplyAction(action) {
+  let T_next, F_next, B_next;
+  try {
+    if (action.type === 'Rewrite') {
+      const { p_app, p_rule, sigma } = action;
+      let rule_term;
+      try {
+        rule_term = getSubtermAt(GameState.T, p_rule);
+      } catch (e) {
+        console.error("重写失败：规则位点不再有效。", e);
+        return;
+      }
+      const r = rule_term.getChild(1);
+      const term_to_insert = ApplySubstitution(r, sigma);
+
+      // Safety: 应保证替换后不会含有变量（理论上我们在收集规则时已禁用会引入游离变量的规则）
+      if (ContainsVariables(term_to_insert)) {
+        console.error("拒绝执行：重写结果含有未绑定变量（安全策略）");
+        return;
+      }
+
+      try {
+        T_next = replaceSubtermAt(GameState.T, p_app, term_to_insert);
+      } catch (e) {
+        console.error("重写失败：应用位点不再有效。", e);
+        return;
+      }
+      F_next = GameState.F - 1;
+      B_next = GameState.B;
+    } else if (action.type === 'Construct') {
+      const { p_fill, t_new } = action;
+      const cost = Size(t_new);
+      if (cost > GameState.B) {
+        console.error("预算不足——UI 应该已阻止此操作");
+        return;
+      }
+      // Fix-3: 禁止构造含变量项
+      if (ContainsVariables(t_new)) {
+        console.error("构造失败：新项含变量（禁止）");
+        return;
+      }
+      try {
+        T_next = replaceSubtermAt(GameState.T, p_fill, t_new);
+      } catch (e) {
+        console.error("构造失败：位点不再有效。", e);
+        return;
+      }
+      F_next = GameState.F;
+      B_next = GameState.B - cost;
+    }
+  } catch (e) {
+    console.error("ApplyAction 捕获到未处理异常：", e);
+    return;
+  }
+  GameState = { T: T_next, F: F_next, B: B_next };
+  runTurn();
+}
+
+// ----------------------------------------------------------------------------
+// Section 4: 辅助函数（Traverse, GetAllGroundSubterms 等）
+// ----------------------------------------------------------------------------
+
+function TraverseWithPositions(T, visit_function, current_path = [], accumulator = []) {
+  visit_function(T, current_path, accumulator);
+  if (T.isCompound()) {
+    T.children.forEach((child, i) => { TraverseWithPositions(child, visit_function, [...current_path, i], accumulator); });
+  }
+  return accumulator;
+}
+
+function GetAllGroundSubterms(T) {
+  const visit_function = (subterm, path, acc) => { if (!ContainsVariables(subterm)) acc.push(subterm); };
+  return TraverseWithPositions(T, visit_function);
+}
+
+function GetAllGroundSubtermsWithPositions(T) {
+  const visit_function = (subterm, path, acc) => { if (!ContainsVariables(subterm)) acc.push([path, subterm]); };
+  return TraverseWithPositions(T, visit_function);
+}
+
+function FindAllSubterms(T, constructor_name) {
+  const visit_function = (subterm, path, acc) => { if (subterm.isCompound() && subterm.getConstructor() === constructor_name) acc.push(subterm); };
+  return TraverseWithPositions(T, visit_function);
+}
+
+function FindAllSubtermsWithPositions(T, constructor_name) {
+  const visit_function = (subterm, path, acc) => { if (subterm.isCompound() && subterm.getConstructor() === constructor_name) acc.push([path, subterm]); };
+  return TraverseWithPositions(T, visit_function);
+}
+
+// Fix-1: 只接受常量形式的 placeholder（并要求为常量）
+function FindPlaceholderSites(T) {
+  const visit_function = (subterm, path, acc) => {
+    if (subterm.isConstant() && subterm.getConstructor() === "placeholder") {
+      acc.push(path);
+    }
+  };
+  return TraverseWithPositions(T, visit_function);
+}
+
+function ContainsVariables(T) {
+  if (T.isVariable()) return true;
+  if (T.isCompound()) return T.children.some(ContainsVariables);
+  return false;
+}
+
+function ApplySubstitution(T, sigma) {
+  if (T.isVariable()) {
+    // sigma keyed by variable name
+    const mapped = sigma.get(T.value);
+    if (mapped) return mapped.clone();
+    return T.clone();
+  }
+  if (T.isConstant()) return T.clone();
+  if (T.isCompound()) {
+    const new_children = T.children.map(child => ApplySubstitution(child, sigma));
+    return Term.Compound(T.getConstructor(), new_children);
+  }
+}
+
+function getSubtermAt(T, path) {
+  let current = T;
+  for (const index of path) {
+    if (!current.isCompound()) throw new Error('Invalid path: reached non-compound before path ended');
+    if (index < 0 || index >= current.getArity()) throw new Error('Invalid path: index out of bounds');
+    current = current.getChild(index);
+  }
+  return current;
+}
+
+function replaceSubtermAt(T, path, new_subterm) {
+  if (path.length === 0) return new_subterm.clone();
+  const root = T.clone();
+  let current = root;
+  for (let i = 0; i < path.length - 1; i++) {
+    const idx = path[i];
+    if (!current.isCompound()) throw new Error('Invalid path in replaceSubtermAt: reached non-compound');
+    if (idx < 0 || idx >= current.getArity()) throw new Error('Invalid path in replaceSubtermAt: index out of bounds');
+    current = current.getChild(idx);
+  }
+  const lastIdx = path[path.length - 1];
+  if (!current.isCompound()) throw new Error('Invalid path in replaceSubtermAt: parent is not compound');
+  if (lastIdx < 0 || lastIdx >= current.getArity()) throw new Error('Invalid path in replaceSubtermAt: last index out of bounds');
+  current.children[lastIdx] = new_subterm.clone();
+  return root;
+}
+
+function Size(T) {
+  let size = 1;
+  if (T.isCompound()) size += T.children.reduce((acc, child) => acc + Size(child), 0);
+  return size;
+}
+
+function UniqueSubstitutions(substitutions) {
+  const seen = new Set();
+  const unique = [];
+  for (const sub of substitutions) {
+    // sub is Map(variableName -> Term)
+    const entries = Array.from(sub.entries()).map(([k, v]) => [k, v.toString()]).sort((a,b) => a[0].localeCompare(b[0]));
+    const key = JSON.stringify(entries);
+    if (!seen.has(key)) { seen.add(key); unique.push(sub); }
+  }
+  return unique;
+}
+
+// ----------------------------------------------------------------------------
+// Section 5: UI 和游戏逻辑函数（包含 Fix-4: 在动作面板上显示构造动作）
+// ----------------------------------------------------------------------------
+
+function escapeHtml(s) {
+  return String(s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":"&#39;"}[c]));
+}
+
+function termToHtml(term, path = []) {
+  const pathStr = JSON.stringify(path);
+  const commonClasses = 'term-node inline-block border rounded px-1 py-0.5 m-0.5';
+  if (term.isVariable()) {
+    return `<span class="${commonClasses} bg-purple-100 text-purple-800 border-purple-300" data-path='${pathStr}' data-id='${term.id}'>${escapeHtml(term.value)}</span>`;
+  }
+  if (term.isConstant()) {
+    let specialClass = 'bg-gray-100 text-gray-800 border-gray-300';
+    if (term.getConstructor() === 'placeholder') {
+      specialClass = 'bg-yellow-400 text-yellow-900 border-yellow-500 highlight-placeholder';
+    }
+    return `<span class="${commonClasses} ${specialClass}" data-path='${pathStr}' data-id='${term.id}'>${escapeHtml(term.value)}</span>`;
+  }
+  if (term.isCompound()) {
+    let colorClass;
+    switch(term.getConstructor()) {
+      case 'rewrite': colorClass = 'bg-red-50 border-red-200'; break;
+      case 'equiv': colorClass = 'bg-yellow-50 border-yellow-200'; break;
+      case 'tuple': colorClass = 'bg-blue-50 border-blue-200'; break;
+      default: colorClass = 'bg-green-50 border-green-200';
+    }
+    const childrenHtml = term.children.map((child, i) => termToHtml(child, [...path, i])).join(', ');
+    return `<span class="${commonClasses} ${colorClass}" data-path='${pathStr}' data-id='${term.id}'><strong>${escapeHtml(term.value)}</strong>(${childrenHtml})</span>`;
+  }
+}
+
+function DisplayToPlayer(T, F, B, T_target) {
+  document.getElementById('fuel-display').textContent = F;
+  document.getElementById('budget-display').textContent = B;
+  document.getElementById('current-term-display').innerHTML = termToHtml(T);
+  document.getElementById('target-term-display').innerHTML = termToHtml(T_target);
+
+  // 为 placeholders 添加事件监听器（仅常量 placeholder 有 highlight-placeholder）
+  document.querySelectorAll('.highlight-placeholder').forEach(el => {
+    el.onclick = () => { const path = JSON.parse(el.dataset.path); showConstructModal(path); };
+  });
+}
+
+function displayActions(rewrites, placeholders) {
+  const listEl = document.getElementById('actions-list');
+  listEl.innerHTML = '';
+
+  if (rewrites.length === 0 && placeholders.length === 0) {
+    listEl.innerHTML = `<p class="text-slate-500 italic">没有可用的动作。</p>`;
+    return;
+  }
+
+  // 首先列出重写动作
+  rewrites.forEach((action, index) => {
+    const { p_app, p_rule, sigma, snapshot } = action;
+    // attempt to read current appTerm and ruleTerm; if path invalid, mark expired
+    let appTermStr = '(位点失效)';
+    let ruleStr = '(位点失效)';
+    let resultStr = '(位点失效)';
+    try {
+      const appTermCurrent = getSubtermAt(GameState.T, p_app);
+      appTermStr = appTermCurrent.toString();
+    } catch (_) {
+      // fallback to snapshot
+      appTermStr = snapshot && snapshot.appTerm ? snapshot.appTerm.toString() : appTermStr;
+    }
+    try {
+      const ruleTermCurrent = getSubtermAt(GameState.T, p_rule);
+      const [l, r] = ruleTermCurrent.children;
+      ruleStr = `rewrite(${l.toString()}, ${r.toString()})`;
+      // compute result from snapshot substitution if possible
+      resultStr = ApplySubstitution(ruleTermCurrent.getChild(1), sigma).toString();
+    } catch (_) {
+      // fallback to snapshot
+      if (snapshot && snapshot.ruleTerm) {
+        const [l, r] = snapshot.ruleTerm.children;
+        ruleStr = `rewrite(${l.toString()}, ${r.toString()})`;
+        resultStr = ApplySubstitution(r, sigma).toString();
+      }
+    }
+
+    const sigmaDisplay = [...sigma.entries()].map(([k,v]) => `${escapeHtml(k)} → ${escapeHtml(v.toString())}`).join(', ') || '无';
+
+    const card = document.createElement('div');
+    card.className = 'action-card bg-slate-50 border border-slate-200 p-4 rounded-lg cursor-pointer';
+    card.innerHTML = `
+      <div class="font-semibold text-indigo-700 mb-2">重写 #${index + 1}</div>
+      <div class="font-mono text-sm space-y-2">
+        <div><span class="text-slate-500">规则:</span> ${escapeHtml(ruleStr)}</div>
+        <div><span class="text-slate-500">应用点:</span> ${escapeHtml(appTermStr)}</div>
+        <div><span class="text-slate-500">替换:</span> ${sigmaDisplay}</div>
+        <div class="mt-2 pt-2 border-t"><span class="text-slate-500">结果:</span> ${escapeHtml(appTermStr)} <span class="text-xl font-bold mx-2 text-indigo-500">→</span> ${escapeHtml(resultStr)}</div>
+      </div>`;
+
+    card.onclick = () => ApplyAction(action);
+    card.onmouseenter = () => {
+      try { highlightTerms(p_app, p_rule); } catch (_) { /* ignore highlight errors */ }
+    };
+    card.onmouseleave = () => clearHighlights();
+    listEl.appendChild(card);
+  });
+
+  // 然后为每个 placeholder 显式创建一个构造卡片（Fix-4）
+  placeholders.forEach((path, idx) => {
+    let placeholderTerm;
+    try {
+      placeholderTerm = getSubtermAt(GameState.T, path);
+    } catch (_) {
+      // skip invalid placeholder
+      return;
+    }
+    const card = document.createElement('div');
+    card.className = 'action-card bg-yellow-50 border border-yellow-200 p-4 rounded-lg cursor-pointer';
+    card.innerHTML = `
+      <div class="font-semibold text-yellow-800 mb-2">构造 #${idx + 1}</div>
+      <div class="font-mono text-sm space-y-2">
+        <div><span class="text-slate-500">位点:</span> ${escapeHtml(placeholderTerm.toString())}</div>
+        <div><span class="text-slate-500">说明:</span> 点击以构造新项（消耗预算）</div>
+      </div>`;
+    card.onclick = () => showConstructModal(path);
+    card.onmouseenter = () => {
+      clearHighlights();
+      document.querySelector(`[data-id='${placeholderTerm.id}']`)?.classList.add('highlight-placeholder');
+    };
+    card.onmouseleave = clearHighlights;
+    listEl.appendChild(card);
+  });
+}
+
+function highlightTerms(p_app, p_rule) {
+  clearHighlights();
+  let appTerm, ruleTerm;
+  try {
+    appTerm = getSubtermAt(GameState.T, p_app);
+    ruleTerm = getSubtermAt(GameState.T, p_rule);
+  } catch (e) {
+    return;
+  }
+  const lTerm = ruleTerm.getChild(0);
+  const rTerm = ruleTerm.getChild(1);
+
+  document.querySelector(`[data-id='${appTerm.id}']`)?.classList.add('highlight-app');
+  document.querySelector(`[data-id='${lTerm.id}']`)?.classList.add('highlight-rule-l');
+  document.querySelector(`[data-id='${rTerm.id}']`)?.classList.add('highlight-rule-r');
+}
+
+function clearHighlights() {
+  document.querySelectorAll('.term-node').forEach(el => { el.classList.remove('highlight-app', 'highlight-rule-l', 'highlight-rule-r', 'highlight-placeholder'); });
+}
+
+function showConstructModal(path) {
+  const modal = document.getElementById('construct-modal');
+  modal.classList.remove('hidden'); modal.classList.add('flex');
+  document.getElementById('construct-budget').textContent = GameState.B;
+  const input = document.getElementById('construct-input'); input.value = ''; input.focus();
+
+  // bind confirm handler (overwrite old)
+  document.getElementById('construct-confirm').onclick = () => {
+    const errorEl = document.getElementById('construct-error');
+    try {
+      const raw = input.value;
+      const normalized = raw.replace(/\s/g, '');
+      const newTerm = Term.fromString(normalized);
+      const cost = Size(newTerm);
+      if (ContainsVariables(newTerm)) {
+        errorEl.textContent = '构造项必须为地面项（不含变量）。';
+        return;
+      }
+      if (cost > GameState.B) { errorEl.textContent = `构造代价 (${cost}) 超过预算 (${GameState.B})!`; return; }
+      errorEl.textContent = '';
+      ApplyAction({ type: 'Construct', p_fill: path.slice(), t_new: newTerm });
+      hideConstructModal();
+    } catch (e) {
+      errorEl.textContent = "无效的项格式。示例: tuple(a,b)";
+    }
+  };
+  document.getElementById('construct-cancel').onclick = hideConstructModal;
+}
+
+function hideConstructModal() { const modal = document.getElementById('construct-modal'); modal.classList.add('hidden'); modal.classList.remove('flex'); }
+
+function showMessageModal(title, body) { document.getElementById('message-title').textContent = title; document.getElementById('message-body').textContent = body; const modal = document.getElementById('message-modal'); modal.classList.remove('hidden'); modal.classList.add('flex'); }
+function DeclareVictory() { showMessageModal("胜利!", "恭喜你，成功构造出目标项！"); }
+function DeclareDefeat(message) { showMessageModal("失败...", message); }
+
+// ----------------------------------------------------------------------------
+// Section 6: 样例关卡（同初始，但保留以方便测试）
+// ----------------------------------------------------------------------------
+
+function loadSampleLevel() {
+  const T_initial = Term.Compound("puzzle_state", [
+    Term.Compound("rewrite", [ Term.Compound("pair", [Term.Var("X"), Term.Var("Y")]), Term.Compound("rev_pair", [Term.Var("Y"), Term.Var("X")]) ]),
+    Term.Compound("rewrite", [ Term.Const("red"), Term.Const("blue") ]),
+    Term.Compound("equiv", [ Term.Const("apple"), Term.Const("red") ]),
+    Term.Compound("data", [ Term.Compound("pair", [Term.Const("apple"), Term.Const("green")]) ]),
+    Term.Compound("data", [ Term.Const("placeholder") ])
+  ]);
+  const F_initial = 5; const B_initial = 10;
+  const T_target = Term.Compound("puzzle_state", [
+    Term.Compound("rewrite", [ Term.Compound("pair", [Term.Var("X"), Term.Var("Y")]), Term.Compound("rev_pair", [Term.Var("Y"), Term.Var("X")]) ]),
+    Term.Compound("rewrite", [ Term.Const("red"), Term.Const("blue") ]),
+    Term.Compound("equiv", [ Term.Const("apple"), Term.Const("red") ]),
+    Term.Compound("data", [ Term.Compound("rev_pair", [Term.Const("green"), Term.Const("blue")]) ]),
+    Term.Compound("data", [ Term.Const("done") ])
+  ]);
+  MainGameLoop(T_initial, F_initial, B_initial, T_target);
+}
+
+// ----------------------------------------------------------------------------
+// Section 7: 开发者工具
+// ----------------------------------------------------------------------------
+
+function populateDevPanel() {
+  document.getElementById('dev-fuel-input').value = GameState.F;
+  document.getElementById('dev-budget-input').value = GameState.B;
+  document.getElementById('dev-current-term-input').value = GameState.T.toString().replace(/\),/g, '),\n');
+  document.getElementById('dev-target-term-input').value = TargetTerm.toString().replace(/\),/g, '),\n');
+}
+
+function toggleDevPanel() { const panel = document.getElementById('dev-panel'); const isHidden = panel.classList.contains('hidden'); if (isHidden) { populateDevPanel(); panel.classList.remove('hidden'); } else { panel.classList.add('hidden'); } }
+
+function applyDevSettings() {
+  const errorEl = document.getElementById('dev-error-message'); errorEl.textContent = '';
+  try {
+    const fuel = parseInt(document.getElementById('dev-fuel-input').value, 10);
+    const budget = parseInt(document.getElementById('dev-budget-input').value, 10);
+    const currentTermStr = document.getElementById('dev-current-term-input').value.replace(/\s/g, '');
+    const targetTermStr = document.getElementById('dev-target-term-input').value.replace(/\s/g, '');
+    if (isNaN(fuel) || isNaN(budget) || fuel < 0 || budget < 0) throw new Error('燃料和预算必须是非负整数。');
+    if (currentTermStr === '' || targetTermStr === '') throw new Error('当前项和目标项不能为空。');
+    const currentTerm = Term.fromString(currentTermStr);
+    const targetTerm = Term.fromString(targetTermStr);
+    MainGameLoop(currentTerm, fuel, budget, targetTerm);
+    // close panel
+    document.getElementById('dev-panel').classList.add('hidden');
+  } catch (e) {
+    console.error("开发者设置错误:", e);
+    errorEl.textContent = `应用失败: ${e.message}`;
+  }
+}
+
+function initDevTools() { document.getElementById('dev-toggle-button').addEventListener('click', toggleDevPanel); document.getElementById('dev-apply-button').addEventListener('click', applyDevSettings); }
+
+// ----------------------------------------------------------------------------
+// Section 8: 启动
+// ----------------------------------------------------------------------------
+
+document.addEventListener('DOMContentLoaded', () => {
+  loadSampleLevel();
+  document.getElementById('restart-button').addEventListener('click', () => {
+    document.getElementById('message-modal').classList.add('hidden');
+    MainGameLoop(InitialState.T, InitialState.F, InitialState.B, InitialState.Target);
+  });
+  initDevTools();
+});
+
+</script>
+
+</body>
+</html>
